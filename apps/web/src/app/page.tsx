@@ -6,6 +6,7 @@ import {
   classifyMessage,
   createRequest,
   fetchRequests,
+  RequestListItem,
   RequestStatus,
   updateRequestStatus,
 } from '@/lib/api';
@@ -32,11 +33,30 @@ export default function HomePage() {
   const statusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: RequestStatus }) =>
       updateRequestStatus(id, status),
+    // Optimistic: the <select> is controlled by cached row.status, so without this it
+    // snaps back to the old value until the refetch lands.
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['requests'] });
+      const previous = queryClient.getQueryData<RequestListItem[]>(['requests']);
+      queryClient.setQueryData<RequestListItem[]>(['requests'], (rows) =>
+        rows?.map((row) => (row.id === id ? { ...row, status } : row)),
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      queryClient.setQueryData(['requests'], context?.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['requests'] }),
   });
 
   const classifyMutation = useMutation({
     mutationFn: ({ id, message }: { id: string; message: string }) =>
       classifyMessage(message, id),
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['requests'] }),
+        queryClient.invalidateQueries({ queryKey: ['history'] }),
+      ]),
   });
 
   if (requestsQuery.isLoading) {
